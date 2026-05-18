@@ -345,7 +345,7 @@ static void announce(void)
   printf("MINIX is open source software, see http://www.minix3.org\n");
 
   printf("========================================\n");
-  printf("| Minix 3.4.0rc6 - SO - UNIFESP 1s2026 |\n);
+  printf("| Minix 3.4.0rc6 - SO - UNIFESP 1s2026 |\n");
   printf("| Projeto Pratico (I) - Equipe X |\n");
   printf("========================================\n");	
   printf("Bem vindo ao minix Projeto SO - UNIFESP 1s2026\n");
