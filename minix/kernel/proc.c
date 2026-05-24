@@ -322,10 +322,7 @@ not_runnable_pick_new:
 	if (proc_is_preempted(p)) {
 		p->p_rts_flags &= ~RTS_PREEMPTED;
 		if (proc_is_runnable(p)) {
-			if (p->p_cpu_time_left)
-				enqueue_head(p);
-			else
-				enqueue(p);
+			enqueue(p);		//ALTERAÇÃO: usando só a função enqueue para evitar furar a ordenação
 		}
 	}
 
@@ -1593,7 +1590,7 @@ asyn_error:
  *				enqueue					     * 
  *===========================================================================*/
 void enqueue(
-  register struct proc *rp	/* this process is now runnable */
+register struct proc *rp	/* this process is now runnable */
 )
 {
 /* Add 'rp' to one of the queues of runnable processes.  This function is 
@@ -1604,9 +1601,11 @@ void enqueue(
  * This function can be used x-cpu as it always uses the queues of the cpu the
  * process is assigned to.
  */
-  int q = rp->p_priority;	 		/* scheduling queue to use */
+  int q = 0;	/* scheduling queue to use. ALTERAÇÂO: usar a lista 0 como única lista */
   struct proc **rdy_head, **rdy_tail;
-  
+  struct proc **xpp; // ALTERAÇÃO: adicionando ponteiro duplo auxiliar
+  struct proc *prev = NULL; // ALTERAÇÃO: adicionando ponteiro auxiliar
+
   assert(proc_is_runnable(rp));
 
   assert(q >= 0);
@@ -1615,15 +1614,23 @@ void enqueue(
   rdy_tail = get_cpu_var(rp->p_cpu, run_q_tail);
 
   /* Now add the process to the queue. */
-  if (!rdy_head[q]) {		/* add to empty queue */
-      rdy_head[q] = rdy_tail[q] = rp; 		/* create a new queue */
-      rp->p_nextready = NULL;		/* mark new end */
-  } 
-  else {					/* add to tail of queue */
-      rdy_tail[q]->p_nextready = rp;		/* chain tail of queue */	
-      rdy_tail[q] = rp;				/* set new queue tail */
-      rp->p_nextready = NULL;		/* mark new end */
-  }
+  /* ALTERAÇÃO PRINCIPAL: Mudança da função de adicinar na fila para
+     adicionar de forma ordenada de acordo com a prioridade */
+ for (xpp = &rdy_head[q]; *xpp; xpp = &(*xpp)->p_nextready) {
+    if ((*xpp)->p_priority > rp->p_priority)
+        break;
+
+    prev = *xpp;
+}
+
+rp->p_nextready = *xpp;
+*xpp = rp;
+
+if (rp->p_nextready == NULL)
+    rdy_tail[q] = rp;
+
+if (prev == NULL && rdy_tail[q] == NULL)
+    rdy_tail[q] = rp;
 
   if (cpuid == rp->p_cpu) {
 	  /*
@@ -1667,47 +1674,11 @@ void enqueue(
  * process on a run queue. We have to put this process back at the fron to be
  * fair
  */
+
+// ALTERAÇÃO: enqueue_head apenas redireciona pro enqueue agora
 static void enqueue_head(struct proc *rp)
 {
-  const int q = rp->p_priority;	 		/* scheduling queue to use */
-
-  struct proc **rdy_head, **rdy_tail;
-
-  assert(proc_ptr_ok(rp));
-  assert(proc_is_runnable(rp));
-
-  /*
-   * the process was runnable without its quantum expired when dequeued. A
-   * process with no time left should have been handled else and differently
-   */
-  assert(rp->p_cpu_time_left);
-
-  assert(q >= 0);
-
-
-  rdy_head = get_cpu_var(rp->p_cpu, run_q_head);
-  rdy_tail = get_cpu_var(rp->p_cpu, run_q_tail);
-
-  /* Now add the process to the queue. */
-  if (!rdy_head[q]) {		/* add to empty queue */
-	rdy_head[q] = rdy_tail[q] = rp; 	/* create a new queue */
-	rp->p_nextready = NULL;			/* mark new end */
-  } else {					/* add to head of queue */
-	rp->p_nextready = rdy_head[q];		/* chain head of queue */
-	rdy_head[q] = rp;			/* set new queue head */
-  }
-
-  /* Make note of when this process was added to queue */
-  read_tsc_64(&(get_cpulocal_var(proc_ptr->p_accounting.enter_queue)));
-
-
-  /* Process accounting for scheduling */
-  rp->p_accounting.dequeues--;
-  rp->p_accounting.preempted++;
-
-#if DEBUG_SANITYCHECKS
-  assert(runqueues_ok_local());
-#endif
+  enqueue(rp);
 }
 
 /*===========================================================================*
@@ -1723,7 +1694,7 @@ void dequeue(struct proc *rp)
  * This function can operate x-cpu as it always removes the process from the
  * queue of the cpu the process is currently assigned to.
  */
-  int q = rp->p_priority;		/* queue to use */
+  int q = 0;		/* queue to use. ALTERAÇÃO: usar lista 0 apenas */
   struct proc **xpp;			/* iterate over queue */
   struct proc *prev_xp;
   u64_t tsc, tsc_delta;
@@ -1799,17 +1770,19 @@ static struct proc * pick_proc(void)
    * If there are no processes ready to run, return NULL.
    */
   rdy_head = get_cpulocal_var(run_q_head);
-  for (q=0; q < NR_SCHED_QUEUES; q++) {	
-	if(!(rp = rdy_head[q])) {
-		TRACE(VF_PICKPROC, printf("cpu %d queue %d empty\n", cpuid, q););
-		continue;
-	}
+
+	// ALTERAÇÃO: mudança de como o próximo processo é escolhido adaptada
+	rp = rdy_head[0];
+	
+	if (!rp)
+	    return NULL;
+	
 	assert(proc_is_runnable(rp));
-	if (priv(rp)->s_flags & BILLABLE)	 	
-		get_cpulocal_var(bill_ptr) = rp; /* bill for system time */
+	
+	if (priv(rp)->s_flags & BILLABLE)
+	    get_cpulocal_var(bill_ptr) = rp;
+	
 	return rp;
-  }
-  return NULL;
 }
 
 /*===========================================================================*
